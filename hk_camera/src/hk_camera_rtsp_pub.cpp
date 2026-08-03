@@ -13,6 +13,7 @@
 #include "opencv2/opencv.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "hk_camera_interfaces/srv/take_photo.hpp"
 #include <cv_bridge/cv_bridge.hpp>
 #include <image_transport/image_transport.hpp>
 
@@ -140,6 +141,14 @@ public:
 
         publisher_ = image_transport::create_publisher(this, "/hk_camera/rgb");
 
+        // Writes the most recent published frame to disk on demand. The frame is already
+        // decoded and flipped here, so a photo costs no extra connection to the camera and
+        // matches exactly what /hk_camera/rgb showed.
+        photo_service_ = create_service<hk_camera_interfaces::srv::TakePhoto>(
+            "~/take_photo",
+            std::bind(&RtspCameraNode::handle_take_photo, this,
+                      std::placeholders::_1, std::placeholders::_2));
+
         if (publish_rate_ > 0.0)
         {
             rate_ = std::make_unique<rclcpp::Rate>(publish_rate_);
@@ -174,6 +183,9 @@ public:
             {
                 RCLCPP_WARN(get_logger(), "Failed to read a frame, reconnecting...");
                 capture_.release();
+                // Drop the cached frame so take_photo reports the outage instead of
+                // quietly writing a picture from before the stream died
+                last_frame_.release();
                 sleep_for_reconnect();
                 continue;
             }
@@ -190,6 +202,12 @@ public:
             }
             frame.header.stamp = now();
             publisher_.publish(frame.toImageMsg());
+
+            // Owned copy: frame.image aliases either the capture buffer or flipped_, and
+            // both are overwritten by the next iteration. The service callback runs on this
+            // same thread (inside spin_some, below), so no lock is needed.
+            frame.image.copyTo(last_frame_);
+            last_frame_stamp_ = frame.header.stamp;
 
             rclcpp::spin_some(get_node_base_interface());
             if (rate_)
@@ -248,7 +266,72 @@ private:
         }
 
         RCLCPP_INFO(get_logger(), "Retrying in %.1fs ...", delay);
-        rclcpp::sleep_for(std::chrono::milliseconds(static_cast<int>(delay * 1000)));
+        // Slice the wait so service calls are still answered while the stream is down.
+        // The backoff reaches a minute, and a take_photo client should be told the stream
+        // is gone rather than blocking until the camera comes back.
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(static_cast<int>(delay * 1000));
+        while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline)
+        {
+            rclcpp::spin_some(get_node_base_interface());
+            rclcpp::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    void handle_take_photo(
+        const std::shared_ptr<hk_camera_interfaces::srv::TakePhoto::Request> request,
+        std::shared_ptr<hk_camera_interfaces::srv::TakePhoto::Response> response)
+    {
+        const std::string &path = request->save_path;
+
+        if (path.empty())
+        {
+            response->success = false;
+            response->message = "save_path is empty.";
+            RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+            return;
+        }
+
+        if (last_frame_.empty())
+        {
+            response->success = false;
+            response->message = capture_.isOpened()
+                                    ? "No frame received from the camera yet."
+                                    : "The camera stream is disconnected.";
+            RCLCPP_ERROR(get_logger(), "take_photo failed: %s", response->message.c_str());
+            return;
+        }
+
+        // imwrite returns false for an unwritable path and throws for an extension it has
+        // no encoder for, so both have to be handled to avoid reporting a success that
+        // left nothing on disk
+        bool written = false;
+        try
+        {
+            written = cv::imwrite(path, last_frame_);
+        }
+        catch (const cv::Exception &e)
+        {
+            response->success = false;
+            response->message = "Could not encode the image for '" + path + "': " + e.what();
+            RCLCPP_ERROR(get_logger(), "take_photo failed: %s", response->message.c_str());
+            return;
+        }
+
+        if (!written)
+        {
+            response->success = false;
+            response->message = "Could not write '" + path +
+                                "'. Check that the directory exists and is writable.";
+            RCLCPP_ERROR(get_logger(), "take_photo failed: %s", response->message.c_str());
+            return;
+        }
+
+        response->success = true;
+        response->message = "Image saved to " + path;
+        RCLCPP_INFO(get_logger(), "Photo (%dx%d, captured at %.3fs) saved to %s",
+                    last_frame_.cols, last_frame_.rows,
+                    rclcpp::Time(last_frame_stamp_).seconds(), path.c_str());
     }
 
     std::string host_;
@@ -268,7 +351,12 @@ private:
 
     cv::VideoCapture capture_;
     cv::Mat flipped_;
+    // Most recently published frame, kept for the take_photo service. Empty until the
+    // first frame arrives and released again whenever the stream drops.
+    cv::Mat last_frame_;
+    builtin_interfaces::msg::Time last_frame_stamp_;
     image_transport::Publisher publisher_;
+    rclcpp::Service<hk_camera_interfaces::srv::TakePhoto>::SharedPtr photo_service_;
     std::unique_ptr<rclcpp::Rate> rate_;
 };
 

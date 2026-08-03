@@ -516,14 +516,8 @@ passed with `--ros-args -p name:=value`, and `width`, `height`, `ExposureTime`,
 
 ## Take-photo service
 
-`hk_camera_server` grabs a frame from the industrial camera on demand and writes it to disk.
-
-```bash
-ros2 run hk_camera hk_camera_server     # node name: image_server, service: /save_image
-ros2 service call /save_image hk_camera_interfaces/srv/TakePhoto "{save_path: '/home/user/Pictures/image.jpg'}"
-```
-
-Service definition — [TakePhoto.srv](hk_camera_interfaces/srv/TakePhoto.srv):
+Both camera types can write a still to disk on demand. They share the same service
+definition — [TakePhoto.srv](hk_camera_interfaces/srv/TakePhoto.srv):
 
 ```
 string save_path
@@ -532,8 +526,45 @@ bool success
 string message
 ```
 
-`hk_camera_client` is a minimal example client. Note that its save path is currently
-hard-coded in [hk_camera_client.cpp](hk_camera/src/hk_camera_client.cpp) — edit it before use.
+The directory must already exist; it is not created. `success` is false with the reason in
+`message` when the path is unwritable, the extension has no encoder, or no frame is
+available yet.
+
+### Network camera (RTSP)
+
+`hk_camera_rtsp_pub` serves `~/take_photo`, which saves the most recent frame it published.
+No second connection to the camera is opened, and the `flip_mode` correction is already
+applied, so the photo matches what `/hk_camera/rgb` showed.
+
+```bash
+ros2 launch hk_camera view_rtsp_camera_launch.py
+ros2 service call /hk_camera_rtsp/take_photo hk_camera_interfaces/srv/TakePhoto \
+  "{save_path: '/home/user/Pictures/image.jpg'}"
+```
+
+The image is whatever the stream carries, so it is the sub-stream resolution when `channel`
+is 102. For a full-resolution still independent of the stream, ask the camera directly:
+
+```bash
+curl --digest -u admin:PASSWORD \
+  "http://192.168.1.64/ISAPI/Streaming/channels/101/picture" -o photo.jpg
+```
+
+While the stream is down the service answers immediately with
+`The camera stream is disconnected.` rather than blocking for the reconnect backoff.
+
+### Industrial camera (MVS SDK)
+
+`hk_camera_server` grabs a fresh frame from the camera on each call.
+
+```bash
+ros2 run hk_camera hk_camera_server     # node name: image_server, service: /save_image
+ros2 service call /save_image hk_camera_interfaces/srv/TakePhoto "{save_path: '/home/user/Pictures/image.jpg'}"
+```
+
+`hk_camera_client` is a minimal example client for this service. Note that its save path is
+currently hard-coded in [hk_camera_client.cpp](hk_camera/src/hk_camera_client.cpp) — edit it
+before use.
 
 ---
 
@@ -550,7 +581,7 @@ hard-coded in [hk_camera_client.cpp](hk_camera/src/hk_camera_client.cpp) — edi
 | `hk_camera_compressed_sub_test_reliable` | yes | — | same topics, reliable QoS depth 30 |
 | `hk_camera_server` | yes | — | service `/save_image` |
 | `hk_camera_client` | no | — | calls `/save_image` |
-| `hk_camera_rtsp_pub` | no | `/hk_camera/rgb` (`Image`, BGR8) | — |
+| `hk_camera_rtsp_pub` | no | `/hk_camera/rgb` (`Image`, BGR8) | service `~/take_photo` |
 | `hk_camera_ptz` | no | — | `~/cmd_vel`, `~/goto_preset`, `~/absolute` |
 
 The `*_test` / `*_test_reliable` pairs exist to benchmark DDS throughput (see below);

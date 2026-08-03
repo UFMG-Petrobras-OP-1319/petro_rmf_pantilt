@@ -129,6 +129,7 @@ ament_target_dependencies(hk_camera_rtsp_pub
   sensor_msgs
   cv_bridge
   image_transport
+  hk_camera_interfaces # the take_photo service
 )
 target_link_libraries(hk_camera_rtsp_pub
   ${OpenCV_LIBRARIES}
