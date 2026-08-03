@@ -278,6 +278,9 @@ ros2 launch hk_camera view_rtsp_camera_launch.py channel:=102 password:=OTHER
 The value is converted to the type of the entry it replaces, so `use_tcp:=false` becomes
 a bool and `publish_rate:=15.0` a float rather than strings the node would reject.
 
+Not every parameter has a launch argument — `reconnect_delay`, `max_reconnect_delay`,
+`frame_id` and the PTZ scale factors are set in the file only.
+
 **Remember to rebuild** after editing a config file — `colcon build` copies it into
 `install/`, and that installed copy is what the launch file reads:
 
@@ -587,7 +590,32 @@ Network card upload/download speed is approximately 8 MB/s.
 **RTSP connection fails / "Failed to read a frame".** Check that the password is correct (HIKVISION
 requires Digest auth — an empty password always fails), that the camera is reachable
 (`ping`), and that the channel exists. Try `channel:=102` for the sub stream, and
-`use_tcp:=false` if the network blocks TCP interleaving.
+`use_tcp:=false` if the network blocks TCP interleaving. If several attempts already
+failed, see the lockout entry below before assuming the password is wrong.
+
+**Everything returns 401 even with the right password — the camera locked you out.**
+HIKVISION cameras block a client IP after a few failed logins (five by default), and
+answer with an ordinary 401 while blocked, so a lockout is indistinguishable from a bad
+password until you ask directly:
+
+```bash
+curl --digest -u admin:PASSWORD http://192.168.1.64/ISAPI/Security/userCheck
+```
+
+```xml
+<userCheck>
+  <statusValue>401</statusValue>
+  <lockStatus>lock</lockStatus>   <!-- locked -->
+  <unlockTime>785</unlockTime>    <!-- seconds remaining -->
+</userCheck>
+```
+
+**Stop the nodes while a lock is active.** Every further attempt renews it, so retrying
+turns a brief mistake into a permanent lockout. Wait out `unlockTime`, or clear it in the
+camera web UI under Configuration → System → Security → Illegal Login Lock; a reboot also
+clears it. The RTSP node backs off exponentially (`reconnect_delay` doubling up to
+`max_reconnect_delay`) so that it does not cause this on its own, but it still cannot
+connect while the lock lasts.
 
 **PTZ returns HTTP 401.** Wrong username or password.
 

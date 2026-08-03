@@ -4,6 +4,8 @@
 // and are not GigE Vision devices, so MV_CC_EnumDevices can never enumerate them.
 // Use the hk_camera node for industrial cameras (MV-CS / MV-CA and similar).
 
+#include <algorithm>
+#include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <string>
@@ -16,6 +18,9 @@
 
 namespace
 {
+// Number of consecutive failures after which the lockout hint is logged once
+constexpr int kFailuresBeforeHint = 3;
+
 // Percent-encode special characters in the user name / password, otherwise the URL is parsed wrong
 std::string url_encode(const std::string &value)
 {
@@ -72,6 +77,9 @@ public:
         frame_id_ = declare_parameter<std::string>("frame_id", "hk_camera");
         use_tcp_ = declare_parameter<bool>("use_tcp", true);
         reconnect_delay_s_ = declare_parameter<double>("reconnect_delay", 3.0);
+        // Upper bound for the backoff below. Retrying a rejected login every few seconds
+        // keeps a camera lockout alive instead of letting it expire, so the wait grows.
+        max_reconnect_delay_s_ = declare_parameter<double>("max_reconnect_delay", 60.0);
         // 0 means publish at full speed, following the camera's own frame rate
         publish_rate_ = declare_parameter<double>("publish_rate", 0.0);
 
@@ -153,6 +161,7 @@ private:
         }
         // Keep only the newest frame so latency does not pile up
         capture_.set(cv::CAP_PROP_BUFFERSIZE, 1);
+        consecutive_failures_ = 0;
         RCLCPP_INFO(get_logger(), "Connected: %.0fx%.0f @ %.1f fps",
                     capture_.get(cv::CAP_PROP_FRAME_WIDTH),
                     capture_.get(cv::CAP_PROP_FRAME_HEIGHT),
@@ -160,14 +169,33 @@ private:
         return true;
     }
 
+    // Wait before the next attempt, backing off exponentially while failures continue.
+    // A fixed short interval is actively harmful when the credentials are wrong: HIKVISION
+    // cameras lock the client out after a few failed logins, and every further attempt
+    // renews that lock, so a brief mistake turns into a permanent lockout.
     void sleep_for_reconnect()
     {
         if (!rclcpp::ok())
         {
             return;
         }
-        rclcpp::sleep_for(
-            std::chrono::milliseconds(static_cast<int>(reconnect_delay_s_ * 1000)));
+
+        const double delay = std::min(reconnect_delay_s_ * std::pow(2.0, consecutive_failures_),
+                                      max_reconnect_delay_s_);
+        ++consecutive_failures_;
+
+        if (consecutive_failures_ == kFailuresBeforeHint)
+        {
+            RCLCPP_WARN(get_logger(),
+                        "%d connection attempts failed in a row. If this is an authentication "
+                        "error, the camera has probably locked this host out; check with "
+                        "curl --digest -u <user>:<password> http://%s/ISAPI/Security/userCheck "
+                        "and stop this node while the lock lasts.",
+                        consecutive_failures_, host_.c_str());
+        }
+
+        RCLCPP_INFO(get_logger(), "Retrying in %.1fs ...", delay);
+        rclcpp::sleep_for(std::chrono::milliseconds(static_cast<int>(delay * 1000)));
     }
 
     std::string host_;
@@ -179,7 +207,9 @@ private:
     std::string frame_id_;
     bool use_tcp_;
     double reconnect_delay_s_;
+    double max_reconnect_delay_s_;
     double publish_rate_;
+    int consecutive_failures_{0};
 
     cv::VideoCapture capture_;
     image_transport::Publisher publisher_;

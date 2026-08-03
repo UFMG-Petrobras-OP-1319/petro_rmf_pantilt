@@ -35,8 +35,12 @@ hk_camera_rtsp:
     use_tcp: true
     # Publish rate in Hz. 0.0 follows the camera's own frame rate.
     publish_rate: 0.0
-    # Seconds to wait before retrying after the stream drops.
+    # Seconds to wait before retrying after the stream drops. The wait doubles on each
+    # consecutive failure up to max_reconnect_delay, and resets once a connection
+    # succeeds. Backing off matters because HIKVISION cameras lock a client out after a
+    # few failed logins, and retrying during the lock keeps renewing it.
     reconnect_delay: 3.0
+    max_reconnect_delay: 60.0
     # frame_id stamped on the published images. Must match the TF used by rviz.
     frame_id: "hk_camera"
 
