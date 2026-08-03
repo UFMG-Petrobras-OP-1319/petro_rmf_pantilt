@@ -6,7 +6,7 @@
 #include "opencv2/opencv.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
-#include "hk_camera_interfaces/srv/take_photo.hpp" // 替换为自定义服务消息的路径
+#include "hk_camera_interfaces/srv/take_photo.hpp" // path to the custom service definition
 
 #include "hk_camera.hpp"
 
@@ -16,7 +16,7 @@ public:
   ImageServerNode()
       : Node("image_server"), MVS_cap(*this)
   {
-    // 创建服务
+    // Create the service
     image_service_ = create_service<hk_camera_interfaces::srv::TakePhoto>(
         "save_image",
         std::bind(&ImageServerNode::handle_image_service_request, this, std::placeholders::_1, std::placeholders::_2));
@@ -29,7 +29,7 @@ private:
   {
     RCLCPP_INFO(this->get_logger(), "Received image request");
 
-    // 将收到的图像数据写入文件
+    // Write the captured image data to a file
     cv::Mat img;
     std::string file_path = request->save_path;
 

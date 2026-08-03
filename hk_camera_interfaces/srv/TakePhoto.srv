@@ -1,0 +1,5 @@
+# Path the captured image is written to
+string save_path
+---
+bool success
+string message

@@ -21,22 +21,22 @@ namespace camera
     //********** CameraProperties config ************************************/
     enum CamerProperties
     {
-        CAP_PROP_FRAMERATE_ENABLE,  //帧数可调
-        CAP_PROP_FRAMERATE,         //帧数
-        CAP_PROP_BURSTFRAMECOUNT,   //外部一次触发帧数
-        CAP_PROP_HEIGHT,            //图像高度
-        CAP_PROP_WIDTH,             //图像宽度
-        CAP_PROP_EXPOSURE_TIME,     //曝光时间
-        CAP_PROP_GAMMA_ENABLE,      //伽马因子可调
-        CAP_PROP_GAMMA,             //伽马因子
-        CAP_PROP_GAINAUTO,          //亮度
-        CAP_PROP_SATURATION_ENABLE, //饱和度可调
-        CAP_PROP_SATURATION,        //饱和度
-        CAP_PROP_OFFSETX,           //X偏置
-        CAP_PROP_OFFSETY,           //Y偏置
-        CAP_PROP_TRIGGER_MODE,      //外部触发
-        CAP_PROP_TRIGGER_SOURCE,    //触发源
-        CAP_PROP_LINE_SELECTOR      //触发线
+        CAP_PROP_FRAMERATE_ENABLE,  // frame rate adjustable
+        CAP_PROP_FRAMERATE,         // frame rate
+        CAP_PROP_BURSTFRAMECOUNT,   // frames acquired per external trigger
+        CAP_PROP_HEIGHT,            // image height
+        CAP_PROP_WIDTH,             // image width
+        CAP_PROP_EXPOSURE_TIME,     // exposure time
+        CAP_PROP_GAMMA_ENABLE,      // gamma adjustable
+        CAP_PROP_GAMMA,             // gamma
+        CAP_PROP_GAINAUTO,          // brightness
+        CAP_PROP_SATURATION_ENABLE, // saturation adjustable
+        CAP_PROP_SATURATION,        // saturation
+        CAP_PROP_OFFSETX,           // X offset
+        CAP_PROP_OFFSETY,           // Y offset
+        CAP_PROP_TRIGGER_MODE,      // external trigger
+        CAP_PROP_TRIGGER_SOURCE,    // trigger source
+        CAP_PROP_LINE_SELECTOR      // trigger line
 
     };
 
@@ -46,20 +46,20 @@ namespace camera
     class Camera
     {
     public:
-        //********** 构造函数  ****************************/
+        //********** constructor ****************************/
         Camera(rclcpp::Node &node);
-        //********** 析构函数  ****************************/
+        //********** destructor *****************************/
         ~Camera();
-        //********** 原始信息转换线程 **********************/
+        //********** raw-data conversion thread *************/
         static void *HKWorkThread(void *p_handle);
 
-        //********** 输出摄像头信息 ***********************/
+        //********** print camera information ***************/
         bool PrintDeviceInfo(MV_CC_DEVICE_INFO *pstMVDevInfo);
-        //********** 设置摄像头参数 ***********************/
+        //********** set camera parameters ******************/
         bool set(camera::CamerProperties type, float value);
-        //********** 恢复默认参数 *************************/
+        //********** restore default parameters *************/
         bool reset();
-        //********** 读图10个相机的原始图像 ********************************/
+        //********** read the raw image from the camera *****/
         void ReadImg(cv::Mat &image);
 
     private:
@@ -93,12 +93,13 @@ namespace camera
     {
         handle = NULL;
 
-        //********** 读取待设置的摄像头参数 第三个参数是默认值 yaml文件未给出该值时生效 ********************************/
+        //********** read the camera parameters to apply; the third argument is the default used
+        // when the yaml file does not provide the value ********************************/
         node.get_parameter_or("width", width, 1920);
         node.get_parameter_or("height", height, 1200);
         node.get_parameter_or("FrameRateEnable", FrameRateEnable, true);
         node.get_parameter_or("FrameRate", FrameRate, 30);
-        node.get_parameter_or("BurstFrameCount", BurstFrameCount, 10); // 一次触发采集的次数
+        node.get_parameter_or("BurstFrameCount", BurstFrameCount, 10); // number of frames acquired per trigger
         node.get_parameter_or("ExposureTime", ExposureTime, 50000);
         node.get_parameter_or("GammaEnable", GammaEnable, false);
         node.get_parameter_or("Gamma", Gamma, (float)0.7);
@@ -111,7 +112,7 @@ namespace camera
         node.get_parameter_or("TriggerSource", TriggerSource, 2);
         node.get_parameter_or("LineSelector", LineSelector, 2);
 
-        //********** 枚举设备 ********************************/
+        //********** enumerate devices **********************/
         MV_CC_DEVICE_INFO_LIST stDeviceList;
         memset(&stDeviceList, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
         nRet = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &stDeviceList);
@@ -139,7 +140,7 @@ namespace camera
             exit(-1);
         }
 
-        //********** 选择设备并创建句柄 *************************/
+        //********** select a device and create a handle ****/
 
         nRet = MV_CC_CreateHandle(&handle, stDeviceList.pDeviceInfo[0]);
 
@@ -149,7 +150,7 @@ namespace camera
             exit(-1);
         }
 
-        // 打开设备
+        // Open the device
         //********** frame **********/
 
         nRet = MV_CC_OpenDevice(handle);
@@ -160,7 +161,7 @@ namespace camera
             exit(-1);
         }
 
-        //设置 yaml 文件里面的配置
+        // Apply the configuration from the yaml file
         this->set(CAP_PROP_FRAMERATE_ENABLE, FrameRateEnable);
         if (FrameRateEnable)
             this->set(CAP_PROP_FRAMERATE, FrameRate);
@@ -181,9 +182,9 @@ namespace camera
         // this->set(CAP_PROP_LINE_SELECTOR, LineSelector);
 
         //********** frame **********/
-        //白平衡 非自适应（给定参数0）
+        // White balance, non-adaptive (parameter 0)
         nRet = MV_CC_SetEnumValue(handle, "BalanceWhiteAuto", 0);
-        // //白平衡度
+        // // white balance value
         // int rgb[3] = {1742, 1024, 2371};
         // for (int i = 0; i < 3; i++)
         // {
@@ -203,7 +204,7 @@ namespace camera
         this->set(CAP_PROP_SATURATION_ENABLE, SaturationEnable);
         if (SaturationEnable)
             this->set(CAP_PROP_SATURATION, Saturation);
-        //软件触发
+        // Software trigger
         // ********** frame **********/
         nRet = MV_CC_SetEnumValue(handle, "TriggerMode", 0);
         if (MV_OK == nRet)
@@ -215,7 +216,7 @@ namespace camera
             printf("MV_CC_SetTriggerMode fail! nRet [%x]\n", nRet);
         }
 
-        //********** 图像格式 **********/
+        //********** pixel format **********/
         // 0x01100003:Mono10
         // 0x010C0004:Mono10Packed
         // 0x01100005:Mono12
@@ -231,7 +232,7 @@ namespace camera
         // 0x0110000e:BayerGB10
         // 0x01100012:BayerGB12
         // 0x010C002C:BayerGB12Packed
-        nRet = MV_CC_SetEnumValue(handle, "PixelFormat", 0x02180014); // 目前 RGB  
+        nRet = MV_CC_SetEnumValue(handle, "PixelFormat", 0x02180014); // currently RGB
 
         if (MV_OK == nRet)
         {
@@ -254,7 +255,7 @@ namespace camera
         {
             printf("get PixelFormat fail! nRet [%x]\n", nRet);
         }
-        // 开始取流
+        // Start grabbing
         //********** frame **********/
 
         nRet = MV_CC_StartGrabbing(handle);
@@ -264,7 +265,7 @@ namespace camera
             printf("MV_CC_StartGrabbing fail! nRet [%x]\n", nRet);
             exit(-1);
         }
-        //初始化互斥量
+        // Initialize the mutex
         nRet = pthread_mutex_init(&mutex, NULL);
         if (nRet != 0)
         {
@@ -300,7 +301,7 @@ namespace camera
             exit(-1);
         }
         printf("MV_CC_StopGrabbing succeed.\n");
-        // 关闭设备
+        // Close the device
         //********** frame **********/
 
         nRet = MV_CC_CloseDevice(handle);
@@ -311,7 +312,7 @@ namespace camera
             exit(-1);
         }
         printf("MV_CC_CloseDevice succeed.\n");
-        // 销毁句柄
+        // Destroy the handle
         //********** frame **********/
 
         nRet = MV_CC_DestroyHandle(handle);
@@ -322,7 +323,7 @@ namespace camera
             exit(-1);
         }
         printf("MV_CC_DestroyHandle succeed.\n");
-        // 销毁互斥量
+        // Destroy the mutex
         pthread_mutex_destroy(&mutex);
     }
 
@@ -383,7 +384,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetIntValue(handle, "Height", value); //图像高度
+            nRet = MV_CC_SetIntValue(handle, "Height", value); // image height
 
             if (MV_OK == nRet)
             {
@@ -399,7 +400,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetIntValue(handle, "Width", value); //图像宽度
+            nRet = MV_CC_SetIntValue(handle, "Width", value); // image width
 
             if (MV_OK == nRet)
             {
@@ -415,7 +416,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetIntValue(handle, "OffsetX", value); //图像宽度
+            nRet = MV_CC_SetIntValue(handle, "OffsetX", value); // X offset
 
             if (MV_OK == nRet)
             {
@@ -431,7 +432,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetIntValue(handle, "OffsetY", value); //图像宽度
+            nRet = MV_CC_SetIntValue(handle, "OffsetY", value); // Y offset
 
             if (MV_OK == nRet)
             {
@@ -447,7 +448,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetFloatValue(handle, "ExposureTime", value); //曝光时间
+            nRet = MV_CC_SetFloatValue(handle, "ExposureTime", value); // exposure time
 
             if (MV_OK == nRet)
             {
@@ -463,7 +464,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetBoolValue(handle, "GammaEnable", value); //伽马因子是否可调  默认不可调（false）
+            nRet = MV_CC_SetBoolValue(handle, "GammaEnable", value); // whether gamma is adjustable; not adjustable by default (false)
 
             if (MV_OK == nRet)
             {
@@ -479,7 +480,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetFloatValue(handle, "Gamma", value); //伽马越小 亮度越大
+            nRet = MV_CC_SetFloatValue(handle, "Gamma", value); // the smaller the gamma, the brighter the image
 
             if (MV_OK == nRet)
             {
@@ -495,7 +496,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetEnumValue(handle, "GainAuto", value); //亮度 越大越亮
+            nRet = MV_CC_SetEnumValue(handle, "GainAuto", value); // brightness; larger is brighter
 
             if (MV_OK == nRet)
             {
@@ -511,7 +512,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetBoolValue(handle, "SaturationEnable", value); //饱和度是否可调 默认不可调(false)
+            nRet = MV_CC_SetBoolValue(handle, "SaturationEnable", value); // whether saturation is adjustable; not adjustable by default (false)
 
             if (MV_OK == nRet)
             {
@@ -527,7 +528,7 @@ namespace camera
         {
             //********** frame **********/
 
-            nRet = MV_CC_SetIntValue(handle, "Saturation", value); //饱和度 默认128 最大255
+            nRet = MV_CC_SetIntValue(handle, "Saturation", value); // saturation, default 128, max 255
 
             if (MV_OK == nRet)
             {
@@ -543,7 +544,7 @@ namespace camera
         case CAP_PROP_TRIGGER_MODE:
         {
 
-            nRet = MV_CC_SetEnumValue(handle, "TriggerMode", value); //饱和度 默认128 最大255
+            nRet = MV_CC_SetEnumValue(handle, "TriggerMode", value); // trigger mode
 
             if (MV_OK == nRet)
             {
@@ -558,7 +559,7 @@ namespace camera
         case CAP_PROP_TRIGGER_SOURCE:
         {
 
-            nRet = MV_CC_SetEnumValue(handle, "TriggerSource", value); //饱和度 默认128 最大255255
+            nRet = MV_CC_SetEnumValue(handle, "TriggerSource", value); // trigger source
 
             if (MV_OK == nRet)
             {
@@ -573,7 +574,7 @@ namespace camera
         case CAP_PROP_LINE_SELECTOR:
         {
 
-            nRet = MV_CC_SetEnumValue(handle, "LineSelector", value); //饱和度 默认128 最大255
+            nRet = MV_CC_SetEnumValue(handle, "LineSelector", value); // trigger line selector
 
             if (MV_OK == nRet)
             {
@@ -624,8 +625,8 @@ namespace camera
         }
         if (pstMVDevInfo->nTLayerType == MV_GIGE_DEVICE)
         {
-            printf("%s %x\n", "nCurrentIp:", pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp);                 //当前IP
-            printf("%s %s\n\n", "chUserDefinedName:", pstMVDevInfo->SpecialInfo.stGigEInfo.chUserDefinedName); //用户定义名
+            printf("%s %x\n", "nCurrentIp:", pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp);                 // current IP
+            printf("%s %s\n\n", "chUserDefinedName:", pstMVDevInfo->SpecialInfo.stGigEInfo.chUserDefinedName); // user-defined name
         }
         else if (pstMVDevInfo->nTLayerType == MV_USB_DEVICE)
         {
@@ -665,7 +666,7 @@ namespace camera
         MV_FRAME_OUT_INFO_EX stImageInfo = {0};
         MV_CC_PIXEL_CONVERT_PARAM stConvertParam = {0};
         cv::Mat tmp;
-        int image_empty_count = 0; //空图帧数
+        int image_empty_count = 0; // number of empty frames
         while (rclcpp::ok())
         {
             start = static_cast<double>(cv::getTickCount());
@@ -679,17 +680,17 @@ namespace camera
                 }
                 continue;
             }
-            image_empty_count = 0; //空图帧数
-            //转换图像格式为BGR8
+            image_empty_count = 0; // number of empty frames
+            // Convert the pixel format to BGR8
 
-            stConvertParam.nWidth = 1920;                               //ch:图像宽 | en:image width
-            stConvertParam.nHeight = 1200;                              //ch:图像高 | en:image height
-            stConvertParam.pSrcData = m_pBufForDriver;                  //ch:输入数据缓存 | en:input data buffer
-            stConvertParam.nSrcDataLen = MAX_IMAGE_DATA_SIZE;           //ch:输入数据大小 | en:input data size
-            stConvertParam.enDstPixelType = PixelType_Gvsp_BGR8_Packed; //ch:输出像素格式 | en:output pixel format                      //! 输出格式 RGB
-            stConvertParam.pDstBuffer = m_pBufForSaveImage;             //ch:输出数据缓存 | en:output data buffer
-            stConvertParam.nDstBufferSize = MAX_IMAGE_DATA_SIZE;        //ch:输出缓存大小 | en:output buffer size
-            stConvertParam.enSrcPixelType = stImageInfo.enPixelType;    //ch:输入像素格式 | en:input pixel format                       //! 输入格式 RGB
+            stConvertParam.nWidth = 1920;                               // image width
+            stConvertParam.nHeight = 1200;                              // image height
+            stConvertParam.pSrcData = m_pBufForDriver;                  // input data buffer
+            stConvertParam.nSrcDataLen = MAX_IMAGE_DATA_SIZE;           // input data size
+            stConvertParam.enDstPixelType = PixelType_Gvsp_BGR8_Packed; // output pixel format (RGB)
+            stConvertParam.pDstBuffer = m_pBufForSaveImage;             // output data buffer
+            stConvertParam.nDstBufferSize = MAX_IMAGE_DATA_SIZE;        // output buffer size
+            stConvertParam.enSrcPixelType = stImageInfo.enPixelType;    // input pixel format (RGB)
             MV_CC_ConvertPixelType(p_handle, &stConvertParam);
             pthread_mutex_lock(&mutex);
             camera::frame = cv::Mat(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC3, m_pBufForSaveImage).clone(); //tmp.clone();

@@ -4,16 +4,16 @@
 #include <iostream>
 
 #include "rclcpp/rclcpp.hpp"
-#include "hk_camera_interfaces/srv/take_photo.hpp"  // 替换为自定义服务消息的路径
+#include "hk_camera_interfaces/srv/take_photo.hpp"  // path to the custom service definition
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
 
-  // 创建节点
+  // Create the node
   auto node = rclcpp::Node::make_shared("image_client");
 
-  // 创建服务客户端
+  // Create the service client
   auto client = node->create_client<hk_camera_interfaces::srv::TakePhoto>("save_image");
 
   while (!client->wait_for_service(std::chrono::seconds(1))) {
@@ -24,20 +24,20 @@ int main(int argc, char * argv[])
     RCLCPP_INFO(node->get_logger(), "Service not available, waiting...");
   }
 
-  // 创建请求
+  // Build the request
   auto request = std::make_shared<hk_camera_interfaces::srv::TakePhoto::Request>();
-  request->save_path = "/home/zth/Pictures/image.jpg"; // 设置图像保存路径
+  request->save_path = "/home/zth/Pictures/image.jpg"; // where the image is written
 
-  // 发送请求并等待响应
+  // Send the request and wait for the response
   auto future = client->async_send_request(request);
   if (rclcpp::spin_until_future_complete(node, future) ==
       rclcpp::FutureReturnCode::SUCCESS)
   {
     auto response = future.get();
     if (response->success) {
-      RCLCPP_INFO(node->get_logger(), response->message);
+      RCLCPP_INFO(node->get_logger(), "%s", response->message.c_str());
     } else {
-      RCLCPP_ERROR(node->get_logger(), response->message);
+      RCLCPP_ERROR(node->get_logger(), "%s", response->message.c_str());
     }
   } else {
     RCLCPP_ERROR(node->get_logger(), "Service call failed");
