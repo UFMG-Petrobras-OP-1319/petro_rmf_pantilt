@@ -24,7 +24,7 @@ the current tree builds and runs on ROS 2 Jazzy.
 
 ---
 
-## Quick guide (network camera — copy and paste)
+## Quick guide (network camera)
 
 Everything below is meant to be pasted straight into a terminal. It assumes Ubuntu with
 ROS 2 already installed, and a HIKVISION network camera reachable on your network.
