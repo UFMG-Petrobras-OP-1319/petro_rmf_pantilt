@@ -1,0 +1,58 @@
+# Configuration for the HIKVISION network camera (IP camera) pipeline.
+#
+# Read by launch/view_rtsp_camera_launch.py. Edit the values here instead of typing
+# them on the command line every time. Anything set here can still be overridden on
+# the command line, for example:
+#
+#   ros2 launch hk_camera view_rtsp_camera_launch.py channel:=102
+#
+# This is a standard ROS 2 parameter file, so it also works directly with a node:
+#
+#   ros2 run hk_camera hk_camera_ptz --ros-args --params-file <this file>
+#
+# The "/**" section applies to every node, so the connection settings shared by the
+# video and PTZ nodes are written only once. The per-node sections below add the
+# settings that differ, and override "/**" where the names collide (port, channel).
+
+/**:
+  ros__parameters:
+    # Camera IP address.
+    host: "192.168.1.64"
+    # Login credentials. HIKVISION requires Digest auth, so an empty password fails.
+    username: "admin"
+    password: ""
+
+hk_camera_rtsp:
+  ros__parameters:
+    # RTSP port.
+    port: 554
+    # Stream channel: 101 = main stream (high resolution),
+    #                 102 = sub stream (lower resolution, less latency).
+    channel: 101
+    # Full RTSP URL. When non-empty it overrides host/username/password/port/channel.
+    rtsp_url: ""
+    # Carry RTSP over TCP. UDP tears the image when packets are lost.
+    use_tcp: true
+    # Publish rate in Hz. 0.0 follows the camera's own frame rate.
+    publish_rate: 0.0
+    # Seconds to wait before retrying after the stream drops.
+    reconnect_delay: 3.0
+    # frame_id stamped on the published images. Must match the TF used by rviz.
+    frame_id: "hk_camera"
+
+hk_camera_ptz:
+  ros__parameters:
+    # ISAPI HTTP port. This is not the RTSP port.
+    port: 80
+    # ISAPI PTZ channel number, normally 1.
+    channel: 1
+    # Speed multipliers applied to cmd_vel before it is clamped to the ISAPI
+    # range of -100..100. Lower these to make the camera move more gently.
+    pan_scale: 1.0
+    tilt_scale: 1.0
+    zoom_scale: 1.0
+    # Stop the gimbal when no cmd_vel has arrived for this many seconds, so it
+    # does not keep moving if the teleop side dies. 0.0 disables the watchdog.
+    command_timeout: 1.0
+    # Per-request HTTP timeout in seconds.
+    http_timeout: 2.0

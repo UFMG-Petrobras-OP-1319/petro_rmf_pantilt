@@ -1,0 +1,42 @@
+# Configuration for the HIKROBOT industrial camera (GigE Vision / USB3, MVS SDK).
+#
+# Read by launch/view_camera_launch.py. Anything set here can still be overridden on
+# the command line, for example:
+#
+#   ros2 launch hk_camera view_camera_launch.py ExposureTime:=20000
+#
+# This is a standard ROS 2 parameter file, so it also works directly with a node:
+#
+#   ros2 run hk_camera hk_camera --ros-args --params-file <this file>
+
+hk_camera:
+  ros__parameters:
+    # Image size.
+    width: 1920
+    height: 1200
+    # ROI offset from the top-left corner.
+    Offset_x: 0
+    Offset_y: 0
+    # Exposure time in microseconds. The SDK default of 50000 (50 ms) overexposes
+    # indoors and drags the frame rate below 20 Hz.
+    ExposureTime: 10000
+    # Acquisition frame rate limit in Hz, applied only when FrameRateEnable is true.
+    FrameRateEnable: true
+    FrameRate: 30
+    # Auto gain: 0 = off, 1 = once, 2 = continuous.
+    GainAuto: 2
+    # Gamma correction. Gamma is only applied when GammaEnable is true;
+    # the smaller the value, the brighter the image.
+    GammaEnable: false
+    Gamma: 0.7
+    # Saturation is only applied when SaturationEnable is true.
+    # Range 0..255, default 128.
+    SaturationEnable: true
+    Saturation: 128
+    # Trigger configuration. Left at the SDK defaults; the driver currently does
+    # not apply these (the calls are commented out in hk_camera.hpp).
+    TriggerMode: 1
+    TriggerSource: 2
+    LineSelector: 2
+    # Frames acquired per external trigger.
+    BurstFrameCount: 10

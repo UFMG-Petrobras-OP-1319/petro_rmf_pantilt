@@ -12,3 +12,6 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Local config overrides (kept out of the repository)
+*.local.yaml

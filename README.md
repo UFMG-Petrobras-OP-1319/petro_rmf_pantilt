@@ -75,20 +75,45 @@ curl --digest -u admin:PASSWORD http://192.168.1.64/ISAPI/System/deviceInfo
 The `curl` command should print an XML block with the model and serial number. If it
 returns `401`, the credentials are wrong; if it hangs, the camera is unreachable.
 
-### 4. Start the camera
+### 4. Set your camera up once
+
+Put your camera IP and password in the config file so you never have to type them again:
+
+```bash
+nano ~/ptz_ws/hk_camera/config/network_camera.yaml
+```
+
+Edit the three values at the top, then rebuild so the file is installed:
+
+```yaml
+/**:
+  ros__parameters:
+    host: "192.168.1.64"
+    username: "admin"
+    password: "YOUR_PASSWORD"
+```
+
+```bash
+cd ~/ptz_ws && colcon build --packages-select hk_camera && source install/setup.bash
+```
+
+### 5. Start the camera
 
 This single command starts the video stream, the PTZ control node, the static TF, and
 rviz2 with the image already displayed:
 
 ```bash
-ros2 launch hk_camera view_rtsp_camera_launch.py \
-  host:=192.168.1.64 username:=admin password:=PASSWORD
+ros2 launch hk_camera view_rtsp_camera_launch.py
 ```
 
 Leave it running. If the video stutters, use the lower-resolution sub stream by adding
-`channel:=102`.
+`channel:=102`. Any setting can still be overridden without touching the file:
 
-### 5. Move the camera
+```bash
+ros2 launch hk_camera view_rtsp_camera_launch.py host:=192.168.1.108 password:=OTHER
+```
+
+### 6. Move the camera
 
 In a **second terminal**:
 
@@ -128,7 +153,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard \
 `teleop_twist_keyboard` only publishes `linear.x` and `angular.z` — use the
 `ros2 topic pub` commands above for tilt.
 
-### 6. Check the video topic
+### 7. Check the video topic
 
 ```bash
 ros2 topic hz /hk_camera/rgb          # frame rate actually being published
@@ -144,11 +169,15 @@ Full details on every argument, topic, and parameter are in the sections below.
 ```
 ptz_mini_hkcamera/             # repository root (also the colcon workspace)
 ├── hk_camera/                 # main package (ament_cmake)
+│   ├── config/
+│   │   ├── network_camera.yaml          # RTSP + PTZ settings  <-- edit this one
+│   │   └── industrial_camera.yaml       # MVS industrial camera settings
 │   ├── include/hk_camera.hpp  # camera::Camera — MVS SDK wrapper, parameter handling
 │   ├── launch/
 │   │   ├── view_camera_launch.py        # industrial camera + rviz2
 │   │   ├── view_rtsp_camera_launch.py   # network camera + PTZ + rviz2
-│   │   └── take_a_photo_launch.py       # reliable-QoS test publisher
+│   │   ├── take_a_photo_launch.py       # reliable-QoS test publisher
+│   │   └── hk_camera_config.py          # helper that merges YAML + command line
 │   ├── rviz/hk_camera.rviz    # rviz2 config (Image display on /hk_camera/rgb)
 │   └── src/                   # all node sources
 └── hk_camera_interfaces/      # service definitions (ament_cmake + rosidl)
@@ -196,12 +225,86 @@ Build a single package with
 
 ---
 
+## Configuration files
+
+Both launch files take every parameter from a YAML file under
+[hk_camera/config/](hk_camera/config/), so settings live in one place instead of being
+retyped on the command line.
+
+| File | Used by | Configures |
+| --- | --- | --- |
+| [network_camera.yaml](hk_camera/config/network_camera.yaml) | `view_rtsp_camera_launch.py` | `hk_camera_rtsp` (video) and `hk_camera_ptz` (pan/tilt/zoom) |
+| [industrial_camera.yaml](hk_camera/config/industrial_camera.yaml) | `view_camera_launch.py` | `hk_camera` (MVS industrial camera) |
+
+These are standard ROS 2 parameter files, so they also work directly with a node:
+
+```bash
+ros2 run hk_camera hk_camera_ptz --ros-args \
+  --params-file install/hk_camera/share/hk_camera/config/network_camera.yaml
+```
+
+**How the two nodes share settings.** `network_camera.yaml` has a `/**` section that
+applies to every node, holding the connection settings the video and PTZ nodes have in
+common, plus one section per node for what differs:
+
+```yaml
+/**:                      # applies to both nodes
+  ros__parameters:
+    host: "192.168.1.64"
+    username: "admin"
+    password: ""
+
+hk_camera_rtsp:           # video node only
+  ros__parameters:
+    port: 554             # RTSP port; overrides /** where names collide
+    channel: 101
+
+hk_camera_ptz:            # PTZ node only
+  ros__parameters:
+    port: 80              # ISAPI HTTP port
+    channel: 1
+```
+
+A node-specific section always wins over `/**`, which is why `port` can mean 554 for the
+video node and 80 for the PTZ node in the same file.
+
+**Command line still wins.** Every launch argument defaults to empty, meaning "use the
+config file". Pass one and it overrides the file for that run only:
+
+```bash
+ros2 launch hk_camera view_rtsp_camera_launch.py channel:=102 password:=OTHER
+```
+
+The value is converted to the type of the entry it replaces, so `use_tcp:=false` becomes
+a bool and `publish_rate:=15.0` a float rather than strings the node would reject.
+
+**Remember to rebuild** after editing a config file — `colcon build` copies it into
+`install/`, and that installed copy is what the launch file reads:
+
+```bash
+colcon build --packages-select hk_camera && source install/setup.bash
+```
+
+**Using a different file entirely**, for a second camera or to keep credentials out of
+the repository:
+
+```bash
+cp hk_camera/config/network_camera.yaml ~/my_camera.yaml
+# edit ~/my_camera.yaml, then:
+ros2 launch hk_camera view_rtsp_camera_launch.py config_file:=~/my_camera.yaml
+```
+
+A file passed this way is read from the path you give, so it does not need a rebuild.
+Files named `*.local.yaml` are gitignored for exactly this purpose.
+
+---
+
 ## Quick start — network camera (RTSP + PTZ)
 
 One command brings up the video stream, the PTZ control node, a static TF, and rviz2:
 
 ```bash
-ros2 launch hk_camera view_rtsp_camera_launch.py password:=YOUR_PASSWORD
+ros2 launch hk_camera view_rtsp_camera_launch.py
 ```
 
 Common variants:
@@ -215,9 +318,11 @@ ros2 launch hk_camera view_rtsp_camera_launch.py host:=192.168.1.108 password:=x
 ros2 launch hk_camera view_rtsp_camera_launch.py password:=xxx ptz:=false
 ```
 
-Launch arguments:
+Launch arguments. The defaults below live in
+[network_camera.yaml](hk_camera/config/network_camera.yaml); passing an argument
+overrides the file for that run:
 
-| Argument | Default | Meaning |
+| Argument | Default (from config) | Meaning |
 | --- | --- | --- |
 | `host` | `192.168.1.64` | Camera IP address |
 | `port` | `554` | RTSP port |
@@ -227,6 +332,7 @@ Launch arguments:
 | `use_tcp` | `true` | RTSP over TCP (stable) vs UDP |
 | `publish_rate` | `0.0` | Publish rate in Hz; `0` follows the camera frame rate |
 | `rviz` / `rviz_config` | `true` / package config | Start rviz2 and which config to load |
+| `config_file` | `config/network_camera.yaml` | Parameter file the nodes are configured from |
 | `ptz` | `true` | Also start the PTZ control node |
 | `http_port` | `80` | ISAPI HTTP port (PTZ) — *not* the RTSP port |
 | `ptz_channel` | `1` | ISAPI PTZ channel, normally `1` |
@@ -302,6 +408,9 @@ Only cameras that support absolute positioning will accept this.
 
 ### Parameters
 
+Set in the `hk_camera_ptz` section of
+[network_camera.yaml](hk_camera/config/network_camera.yaml):
+
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `host` | `192.168.1.64` | Camera IP |
@@ -324,9 +433,9 @@ ros2 run hk_camera hk_camera_ptz --ros-args \
 ## Quick start — industrial camera (MVS SDK)
 
 ```bash
-# raw images + rviz2
+# raw images + rviz2, all settings from config/industrial_camera.yaml
 ros2 launch hk_camera view_camera_launch.py
-ros2 launch hk_camera view_camera_launch.py ExposureTime:=10000 FrameRate:=30
+ros2 launch hk_camera view_camera_launch.py ExposureTime:=20000 FrameRate:=30
 ros2 launch hk_camera view_camera_launch.py rviz:=false
 ```
 
@@ -340,8 +449,10 @@ ros2 run hk_camera hk_camera_compressed_sub   # subscribes and shows the stream 
 
 ### Camera parameters
 
-Read by `camera::Camera` in [hk_camera.hpp](hk_camera/include/hk_camera.hpp) and settable
-with `--ros-args -p name:=value` or via the launch file:
+Set in [industrial_camera.yaml](hk_camera/config/industrial_camera.yaml), read by
+`camera::Camera` in [hk_camera.hpp](hk_camera/include/hk_camera.hpp). They can also be
+passed with `--ros-args -p name:=value`, and `width`, `height`, `ExposureTime`,
+`FrameRate` and `GainAuto` are exposed as launch arguments:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |

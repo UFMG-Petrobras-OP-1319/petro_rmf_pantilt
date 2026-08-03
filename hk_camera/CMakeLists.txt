@@ -164,8 +164,8 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install launch files and the rviz config
-install(DIRECTORY launch rviz
+# Install launch files, parameter files and the rviz config
+install(DIRECTORY launch config rviz
   DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
