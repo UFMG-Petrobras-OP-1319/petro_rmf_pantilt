@@ -345,6 +345,48 @@ The video is published on `/hk_camera/rgb` (`sensor_msgs/Image`, BGR8), so
 
 ---
 
+## Mounting the camera upside down
+
+Two things need flipping: the picture and the PTZ directions.
+
+**The picture.** Prefer fixing it in the camera, under **Configuration → Image → Display
+Settings → Mirror** in the web UI (`Center` is the 180° option on most models). That costs
+nothing on the ROS side and corrects the stream for every client, not just ROS.
+
+If you cannot change the camera, the node can do it. Set `flip_mode` in
+[network_camera.yaml](hk_camera/config/network_camera.yaml):
+
+| `flip_mode` | Effect |
+| --- | --- |
+| `none` *(default)* | Publish frames unchanged |
+| `rotate_180` | Upside-down mount — mirrors both axes |
+| `horizontal` | Mirror left/right |
+| `vertical` | Mirror top/bottom |
+
+```bash
+ros2 run hk_camera hk_camera_rtsp_pub --ros-args -p flip_mode:=rotate_180
+```
+
+Use `rotate_180`, not `180`: on the command line `-p flip_mode:=180` is parsed as an
+integer and the node rejects it with an `InvalidParameterTypeException`. The value `"180"`
+does work inside a YAML file, where it is quoted.
+
+This costs one full-frame copy per image, which is a few milliseconds at 1080p — real but
+usually not worth worrying about. An unrecognised value logs a warning and publishes
+frames unchanged rather than failing.
+
+**The PTZ directions.** Upside down, "pan right" moves the picture left. Invert the axes
+by setting the scales negative in the `hk_camera_ptz` section:
+
+```yaml
+hk_camera_ptz:
+  ros__parameters:
+    pan_scale: -1.0
+    tilt_scale: -1.0
+```
+
+---
+
 ## Pan / tilt / zoom control
 
 `hk_camera_ptz` talks to the camera over **ISAPI** (HTTP + Digest auth, port 80),

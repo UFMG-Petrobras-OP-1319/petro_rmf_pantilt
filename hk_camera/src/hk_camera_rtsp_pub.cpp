@@ -21,6 +21,34 @@ namespace
 // Number of consecutive failures after which the lockout hint is logged once
 constexpr int kFailuresBeforeHint = 3;
 
+// Sentinel meaning "publish the frame as it arrives"; the others are cv::flip codes
+constexpr int kNoFlip = -2;
+
+// Translate the flip_mode parameter into the code cv::flip expects
+int flip_code_from(const std::string &mode)
+{
+    if (mode == "none" || mode.empty())
+    {
+        return kNoFlip;
+    }
+    if (mode == "horizontal")
+    {
+        return 1;
+    }
+    if (mode == "vertical")
+    {
+        return 0;
+    }
+    // "180" works from a YAML file, where it is quoted. On the command line
+    // -p flip_mode:=180 is parsed as an integer and the node rejects it, so
+    // rotate_180 is the spelling that works everywhere.
+    if (mode == "rotate_180" || mode == "180" || mode == "both")
+    {
+        return -1;
+    }
+    return kNoFlip;
+}
+
 // Percent-encode special characters in the user name / password, otherwise the URL is parsed wrong
 std::string url_encode(const std::string &value)
 {
@@ -75,6 +103,22 @@ public:
         // When a full URL is given, the host/username/... parameters above are ignored
         rtsp_url_ = declare_parameter<std::string>("rtsp_url", "");
         frame_id_ = declare_parameter<std::string>("frame_id", "hk_camera");
+        // Rotate or mirror every frame before publishing, for a camera that is not
+        // mounted upright: "none", "horizontal", "vertical", or "rotate_180" for an
+        // upside-down mount. Doing this on the camera instead costs no CPU here.
+        flip_mode_ = declare_parameter<std::string>("flip_mode", "none");
+        flip_code_ = flip_code_from(flip_mode_);
+        if (flip_code_ == kNoFlip && flip_mode_ != "none" && !flip_mode_.empty())
+        {
+            RCLCPP_WARN(get_logger(),
+                        "Unknown flip_mode '%s'; expected none, horizontal, vertical or rotate_180. "
+                        "Publishing frames unchanged.",
+                        flip_mode_.c_str());
+        }
+        else if (flip_code_ != kNoFlip)
+        {
+            RCLCPP_INFO(get_logger(), "Flipping every frame: %s", flip_mode_.c_str());
+        }
         use_tcp_ = declare_parameter<bool>("use_tcp", true);
         reconnect_delay_s_ = declare_parameter<double>("reconnect_delay", 3.0);
         // Upper bound for the backoff below. Retrying a rejected login every few seconds
@@ -134,7 +178,16 @@ public:
                 continue;
             }
 
-            frame.image = image;
+            if (flip_code_ == kNoFlip)
+            {
+                frame.image = image;
+            }
+            else
+            {
+                // Not done in place: cv::flip does not support aliasing src and dst
+                cv::flip(image, flipped_, flip_code_);
+                frame.image = flipped_;
+            }
             frame.header.stamp = now();
             publisher_.publish(frame.toImageMsg());
 
@@ -205,6 +258,8 @@ private:
     int channel_;
     std::string rtsp_url_;
     std::string frame_id_;
+    std::string flip_mode_;
+    int flip_code_{kNoFlip};
     bool use_tcp_;
     double reconnect_delay_s_;
     double max_reconnect_delay_s_;
@@ -212,6 +267,7 @@ private:
     int consecutive_failures_{0};
 
     cv::VideoCapture capture_;
+    cv::Mat flipped_;
     image_transport::Publisher publisher_;
     std::unique_ptr<rclcpp::Rate> rate_;
 };

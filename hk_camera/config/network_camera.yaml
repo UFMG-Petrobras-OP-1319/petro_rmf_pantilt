@@ -43,6 +43,11 @@ hk_camera_rtsp:
     max_reconnect_delay: 60.0
     # frame_id stamped on the published images. Must match the TF used by rviz.
     frame_id: "hk_camera"
+    # Rotate or mirror every frame before publishing, for a camera that is not mounted
+    # upright: none, horizontal, vertical, or rotate_180 for an upside-down mount.
+    # Doing this in the camera instead (web UI: Image -> Display Settings -> Mirror)
+    # costs no CPU here and fixes the picture for every client, not just ROS.
+    flip_mode: "none"
 
 hk_camera_ptz:
   ros__parameters:
@@ -52,6 +57,8 @@ hk_camera_ptz:
     channel: 1
     # Speed multipliers applied to cmd_vel before it is clamped to the ISAPI
     # range of -100..100. Lower these to make the camera move more gently.
+    # Set a scale to -1.0 to invert that axis, which an upside-down mount needs so
+    # that "pan right" still moves the picture right.
     pan_scale: 1.0
     tilt_scale: 1.0
     zoom_scale: 1.0
