@@ -113,34 +113,34 @@ Leave it running. If the video stutters, use the lower-resolution sub stream by 
 ros2 launch hk_camera view_rtsp_camera_launch.py host:=192.168.1.108 password:=OTHER
 ```
 
-### 6. Move the camera
+### 6. Move the camera (Velocity Control)
 
 In a **second terminal**:
 
 ```bash
 source ~/ptz_ws/install/setup.bash
+```
+The cmd_vel topic expects continuous messages. After the command, press Ctrl+C to stop publishing and the camera will automatically stop within a second.
 
+```bash
 # pan right at 40% speed
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.4}}'
+ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.4}}'
 
 # pan left
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: -0.4}}'
+ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: -0.4}}'
 
 # tilt up
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: 0.4}}'
+ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: 0.4}}'
 
 # tilt down
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: -0.4}}'
+ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: -0.4}}'
 
 # zoom in
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.5}}'
+ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.5}}'
 
 # stop
 ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{}'
 ```
-
-The camera stops on its own about half a second after the last command, so it never
-runs away if you forget the stop.
 
 Drive it with the keyboard instead:
 
@@ -153,7 +153,18 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard \
 `teleop_twist_keyboard` only publishes `linear.x` and `angular.z` — use the
 `ros2 topic pub` commands above for tilt.
 
-### 7. Check the video topic
+### 7. Move to Absolute Position
+
+To move the camera to a fixed coordinate, use the ~/absolute topic. Since this is a single target, you have to publish just once; the parameters are x for Azimuth (degrees), y for Elevation (degrees), and z for Zoom.
+
+```bash
+# Move to 45 degrees pan, 15 degrees tilt, and 2x zoom
+ros2 topic pub -1 /hk_camera_ptz/absolute geometry_msgs/msg/Vector3 '{x: 45.0, y: 15.0, z: 2.0}'
+
+# Return to center/home position
+ros2 topic pub -1 /hk_camera_ptz/absolute geometry_msgs/msg/Vector3 '{x: 0.0, y: 0.0, z: 1
+
+### 8. Check the video topic
 
 ```bash
 ros2 topic hz /hk_camera/rgb          # frame rate actually being published
