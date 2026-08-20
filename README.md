@@ -124,22 +124,20 @@ The cmd_vel topic expects continuous messages. After the command, press Ctrl+C t
 
 ```bash
 # pan right at 40% speed
-ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.4}}'
+ros2 topic pub -r 1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.4}}'
 
 # pan left
-ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: -0.4}}'
+ros2 topic pub -r 1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {z: -0.4}}'
 
 # tilt up
-ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: 0.4}}'
+ros2 topic pub -r 1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: 0.4}}'
 
 # tilt down
-ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: -0.4}}'
+ros2 topic pub -r 1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{angular: {y: -0.4}}'
 
 # zoom in
-ros2 topic pub -r 10 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.5}}'
+ros2 topic pub -r 1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.5}}'
 
-# stop
-ros2 topic pub -1 /hk_camera_ptz/cmd_vel geometry_msgs/msg/Twist '{}'
 ```
 
 Drive it with the keyboard instead:
@@ -163,6 +161,7 @@ ros2 topic pub -1 /hk_camera_ptz/absolute geometry_msgs/msg/Vector3 '{x: 45.0, y
 
 # Return to center/home position
 ros2 topic pub -1 /hk_camera_ptz/absolute geometry_msgs/msg/Vector3 '{x: 0.0, y: 0.0, z: 1
+```
 
 ### 8. Check the video topic
 
