@@ -591,7 +591,7 @@ before use.
 | `hk_camera_compressed_sub_test_reliable` | yes | — | same topics, reliable QoS depth 30 |
 | `hk_camera_server` | yes | — | service `/save_image` |
 | `hk_camera_client` | no | — | calls `/save_image` |
-| `hk_camera_rtsp_pub` | no | `/hk_camera/rgb` (`Image`, BGR8) | service `~/take_photo` |
+| `hk_camera_rtsp_pub` | no | `hk_camera/rgb` (`Image`, BGR8; relative, follows the node namespace) | service `~/take_photo` |
 | `hk_camera_ptz` | no | — | `~/cmd_vel`, `~/goto_preset`, `~/absolute` |
 
 The `*_test` / `*_test_reliable` pairs exist to benchmark DDS throughput (see below);
