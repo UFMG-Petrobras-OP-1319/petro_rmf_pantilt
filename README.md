@@ -183,6 +183,7 @@ ptz_mini_hkcamera/             # repository root (also the colcon workspace)
 │   │   ├── network_camera.yaml          # RTSP + PTZ settings  <-- edit this one
 │   │   └── industrial_camera.yaml       # MVS industrial camera settings
 │   ├── include/hk_camera.hpp  # camera::Camera — MVS SDK wrapper, parameter handling
+│   ├── include/ptz_geometry.hpp  # joint <-> ISAPI conversions, status parser (tested)
 │   ├── launch/
 │   │   ├── view_camera_launch.py        # industrial camera + rviz2
 │   │   ├── view_rtsp_camera_launch.py   # network camera + PTZ + rviz2
@@ -190,8 +191,9 @@ ptz_mini_hkcamera/             # repository root (also the colcon workspace)
 │   │   └── hk_camera_config.py          # helper that merges YAML + command line
 │   ├── rviz/hk_camera.rviz    # rviz2 config (Image display on /hk_camera/rgb)
 │   └── src/                   # all node sources
-└── hk_camera_interfaces/      # service definitions (ament_cmake + rosidl)
-    └── srv/TakePhoto.srv
+├── hk_camera_interfaces/      # service definitions (ament_cmake + rosidl)
+│   └── srv/TakePhoto.srv
+└── image_snapshot/            # TakePhoto for any image topic (ament_python)
 ```
 
 ---
@@ -461,6 +463,33 @@ ros2 topic pub -1 /hk_camera_ptz/absolute geometry_msgs/msg/Vector3 '{x: 90.0, y
 Internally converted to ISAPI units (0.1°, azimuth 0–3600, elevation ±900, zoom 10–1000).
 Only cameras that support absolute positioning will accept this.
 
+### Joint setpoints and position feedback
+
+The fleet (Frota 360) and the robot controller (Polaris) talk about the gimbal in
+**joint space**, exactly like the simulated robot model: `pan_joint` and `tilt_joint`
+in radians. `hk_camera_ptz` speaks that too:
+
+- it subscribes to `pan_camera_cmd` / `tilt_camera_cmd` (`std_msgs/Float64`, radians,
+  relative to the node namespace) and moves the camera there with one absolute move
+  (the pan and tilt that arrive together are sent as one request);
+- it asks the camera where it is (`GET /ISAPI/PTZCtrl/channels/<channel>/status`) at
+  `status_rate` Hz and publishes the position as `sensor_msgs/JointState` on
+  `~/joint_states` (`pan_joint`, `tilt_joint`), which Polaris's `picture_taker`
+  checks before it takes an inspection photo.
+
+How the joints relate to the camera's own azimuth and elevation depends on the mount,
+so it is one sign and one offset per axis (see `include/ptz_geometry.hpp`):
+
+```
+azimuth   = pan_sign  * deg(pan_joint)  + pan_offset_deg     (wrapped to 0~360)
+elevation = tilt_sign * deg(tilt_joint) + tilt_offset_deg    (clamped to -90~90)
+```
+
+**Calibrate them on the robot**: command `pan_camera_cmd` 0 and π/2 and
+`tilt_camera_cmd` 0 and 0.5, and check that the camera turns left and looks up from
+the robot's forward direction as the simulated gimbal does; adjust the signs and
+offsets until it does, then confirm `~/joint_states` reads back the commanded values.
+
 ### Parameters
 
 Set in the `hk_camera_ptz` section of
@@ -475,6 +504,12 @@ Set in the `hk_camera_ptz` section of
 | `pan_scale` / `tilt_scale` / `zoom_scale` | `1.0` | Speed multipliers applied before clamping |
 | `command_timeout` | `0.5` | Seconds without `cmd_vel` before auto-stop; `0` disables |
 | `http_timeout` | `2.0` | Per-request HTTP timeout in seconds |
+| `pan_cmd_topic` / `tilt_cmd_topic` | `pan_camera_cmd` / `tilt_camera_cmd` | Joint setpoints (rad); empty disables the joint bridge |
+| `pan_joint_name` / `tilt_joint_name` | `pan_joint` / `tilt_joint` | Names in the published `JointState` |
+| `pan_sign` / `tilt_sign` | `1.0` | Sign of the joint relative to ISAPI azimuth / elevation (calibrate) |
+| `pan_offset_deg` / `tilt_offset_deg` | `0.0` | ISAPI azimuth / elevation when the joint is 0 (calibrate) |
+| `status_rate` | `5.0` | Hz of the position poll; `0` disables the feedback |
+| `joint_states_topic` | `~/joint_states` | Where the position is published |
 
 Standalone (without the launch file):
 
@@ -534,6 +569,7 @@ string save_path
 ---
 bool success
 string message
+builtin_interfaces/Time stamp   # when the saved frame was captured
 ```
 
 The directory must already exist; it is not created. `success` is false with the reason in
@@ -562,6 +598,25 @@ curl --digest -u admin:PASSWORD \
 
 While the stream is down the service answers immediately with
 `The camera stream is disconnected.` rather than blocking for the reconnect backoff.
+
+### Any image topic (`image_snapshot`)
+
+Cameras without a photo service of their own (the RealSense driver, simulated Gazebo
+cameras) get one from `image_snapshot`, which keeps the newest frame of a topic and
+answers `~/take_photo` like `hk_camera_rtsp_pub`, so whoever takes photos calls the
+same service whatever the camera is:
+
+```bash
+ros2 run image_snapshot image_snapshot --ros-args -r __ns:=/scout_1 \
+  -r __node:=fixed_camera_snapshot -p image_topic:=camera/color/image_raw
+ros2 service call /scout_1/fixed_camera_snapshot/take_photo \
+  hk_camera_interfaces/srv/TakePhoto "{save_path: '/tmp/photo.jpg'}"
+```
+
+`image_topic` may be raw (`sensor_msgs/Image`: `bgr8`, `rgb8`, `bgra8`, `rgba8`,
+`mono8`) or compressed (`transport: compressed`, or a topic ending in `/compressed`).
+A photo is refused when no frame has arrived yet or the newest one is older than
+`max_frame_age_sec` (2 s by default; the stream has stopped).
 
 ### Industrial camera (MVS SDK)
 
@@ -592,7 +647,8 @@ before use.
 | `hk_camera_server` | yes | — | service `/save_image` |
 | `hk_camera_client` | no | — | calls `/save_image` |
 | `hk_camera_rtsp_pub` | no | `hk_camera/rgb` (`Image`, BGR8; relative, follows the node namespace) | service `~/take_photo` |
-| `hk_camera_ptz` | no | — | `~/cmd_vel`, `~/goto_preset`, `~/absolute` |
+| `hk_camera_ptz` | no | `~/joint_states` (`JointState`, polled from the camera) | `~/cmd_vel`, `~/goto_preset`, `~/absolute`, `pan_camera_cmd`, `tilt_camera_cmd` |
+| `image_snapshot` (package `image_snapshot`) | no | — | `image_topic`; service `~/take_photo` |
 
 The `*_test` / `*_test_reliable` pairs exist to benchmark DDS throughput (see below);
 the `_reliable` variants use reliable QoS with a depth of 30, the others best-effort depth 1.
