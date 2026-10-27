@@ -142,6 +142,7 @@ ament_target_dependencies(hk_camera_ptz
   rclcpp
   std_msgs
   geometry_msgs
+  sensor_msgs # joint feedback
 )
 target_link_libraries(hk_camera_ptz
   CURL::libcurl
@@ -178,6 +179,10 @@ if(BUILD_TESTING)
   # uncomment the line when this package is not in a git repo
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  # Joint <-> ISAPI conversions and the status parser (no camera needed)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_ptz_geometry test/test_ptz_geometry.cpp)
 endif()
 
 ament_package()
