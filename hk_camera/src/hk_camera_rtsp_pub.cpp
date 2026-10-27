@@ -329,6 +329,7 @@ private:
 
         response->success = true;
         response->message = "Image saved to " + path;
+        response->stamp = last_frame_stamp_;
         RCLCPP_INFO(get_logger(), "Photo (%dx%d, captured at %.3fs) saved to %s",
                     last_frame_.cols, last_frame_.rows,
                     rclcpp::Time(last_frame_stamp_).seconds(), path.c_str());
