@@ -67,6 +67,24 @@ source ~/ptz_ws/install/setup.bash
 
 Replace `192.168.1.64` with your camera IP and `admin`/`PASSWORD` with your credentials:
 
+`192.168.1.64` is a configuration default, not discovery of the camera. The
+Scout Docker integration uses its own `camera.env` and may override this to
+`192.168.3.64`; changing this package's YAML does not override that launch.
+Check which physical Ethernet adapter is connected to the camera, that the
+camera is powered (including any required PoE), and that this adapter has a
+compatible IPv4 address. A second USB Ethernet adapter can have link but no
+IPv4 address even while the LiDAR works on the first adapter.
+
+`ip -brief address` and `ip neigh` help distinguish a missing route or failed
+Ethernet neighbor from camera authentication. For an unknown camera address,
+use a wired-interface discovery tool such as the vendor discovery utility or
+ARP discovery on the intended camera network. Do not reset the camera or
+change its address until the operator has identified the correct device.
+First establish read-only ISAPI status and RTSP connectivity; calibrate joint
+signs/offsets only after both are working. Transport errors now include curl's
+reason in the PTZ status log; HTTP 401/403 instead indicates camera access
+credentials or permissions.
+
 ```bash
 ping -c 3 192.168.1.64
 curl --digest -u admin:PASSWORD http://192.168.1.64/ISAPI/System/deviceInfo

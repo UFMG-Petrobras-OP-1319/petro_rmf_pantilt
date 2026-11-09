@@ -281,9 +281,20 @@ private:
         const long status = perform("GET", base_url_ + "/status", "", response);
         if (status != 200)
         {
-            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                                 "PTZ status request failed (HTTP %ld); no joint feedback",
-                                 status);
+            if (status < 0)
+            {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                     "PTZ status transport failed: %s; check camera host, "
+                                     "power and network; no joint feedback",
+                                     response.c_str());
+            }
+            else
+            {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                     "PTZ status request failed (HTTP %ld); "
+                                     "check camera credentials and ISAPI access; no joint feedback",
+                                     status);
+            }
             return;
         }
         const auto position = hk_camera::parse_ptz_status(response);
