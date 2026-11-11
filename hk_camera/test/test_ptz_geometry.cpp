@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <limits>
 
 #include "ptz_geometry.hpp"
 
@@ -70,4 +71,33 @@ TEST(PtzGeometry, RejectsAStatusWithoutAPosition)
     EXPECT_FALSE(hk_camera::parse_ptz_status(
                      "<AbsoluteHigh><elevation>x</elevation><azimuth>10</azimuth></AbsoluteHigh>")
                      .has_value());
+}
+
+TEST(PtzGeometry, ExtendedCommandPreservesDirectZoomUnits)
+{
+    const auto measured = hk_camera::parse_ptz_status(
+        "<AbsoluteHigh><elevation>0</elevation><azimuth>1600</azimuth>"
+        "<absoluteZoom>160</absoluteZoom></AbsoluteHigh>");
+    ASSERT_TRUE(measured);
+    const std::string body = hk_camera::absolute_ex_body(*measured);
+    EXPECT_NE(body.find("<azimuth>160</azimuth>"), std::string::npos);
+    EXPECT_NE(body.find("<absoluteZoom>16</absoluteZoom>"), std::string::npos);
+    EXPECT_EQ(body.find("<absoluteZoom>160</absoluteZoom>"), std::string::npos);
+}
+
+TEST(PtzGeometry, ExtendedCommandPreservesFractionalZoomAndAngles)
+{
+    const std::string body = hk_camera::absolute_ex_body({159.99, 0.1, 30.6});
+    EXPECT_NE(body.find("<azimuth>159.99</azimuth>"), std::string::npos);
+    EXPECT_NE(body.find("<elevation>0.1</elevation>"), std::string::npos);
+    EXPECT_NE(body.find("<absoluteZoom>30.6</absoluteZoom>"), std::string::npos);
+}
+
+TEST(PtzGeometry, ExtendedCommandRejectsNonfiniteTargets)
+{
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_THROW(hk_camera::absolute_ex_body({nan, 0.0, 16.0}), std::invalid_argument);
+    EXPECT_THROW(hk_camera::absolute_ex_body({160.0, nan, 16.0}), std::invalid_argument);
+    EXPECT_THROW(hk_camera::absolute_ex_body({160.0, 0.0, nan}), std::invalid_argument);
+    EXPECT_THROW(hk_camera::absolute_ex_body({160.0, 0.0, 0.0}), std::invalid_argument);
 }

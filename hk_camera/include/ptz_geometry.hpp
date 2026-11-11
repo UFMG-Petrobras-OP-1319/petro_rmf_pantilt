@@ -16,7 +16,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <locale>
 #include <optional>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace hk_camera
@@ -42,6 +46,27 @@ struct JointPosition
     double pan_rad{0.0};
     double tilt_rad{0.0};
 };
+
+// absoluteEx uses degrees and a direct zoom multiplier, unlike the legacy
+// AbsoluteHigh payload. Keep the current zoom in the same units as its readback.
+inline std::string absolute_ex_body(const IsapiPosition &position)
+{
+    if (!std::isfinite(position.azimuth_deg) || !std::isfinite(position.elevation_deg) ||
+        !std::isfinite(position.zoom) || position.zoom <= 0.0)
+    {
+        throw std::invalid_argument("Absolute PTZ target must be finite with positive zoom");
+    }
+    std::ostringstream body;
+    body.imbue(std::locale::classic());
+    body << std::setprecision(12)
+         << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<PTZAbsoluteEx version=\"2.0\" xmlns=\"http://www.hikvision.com/ver20/XMLSchema\">"
+            "<elevation>" << position.elevation_deg << "</elevation>"
+         << "<azimuth>" << position.azimuth_deg << "</azimuth>"
+         << "<absoluteZoom>" << position.zoom << "</absoluteZoom>"
+            "</PTZAbsoluteEx>";
+    return body.str();
+}
 
 inline double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 inline double rad_to_deg(double rad) { return rad * 180.0 / M_PI; }

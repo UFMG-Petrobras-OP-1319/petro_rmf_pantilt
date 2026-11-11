@@ -25,6 +25,7 @@
 #include "curl/curl.h"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "geometry_msgs/msg/vector3_stamped.hpp"
 #include "ptz_geometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
@@ -79,6 +80,13 @@ public:
         tilt_cmd_topic_ = declare_parameter<std::string>("tilt_cmd_topic", "tilt_camera_cmd");
         pan_joint_name_ = declare_parameter<std::string>("pan_joint_name", "pan_joint");
         tilt_joint_name_ = declare_parameter<std::string>("tilt_joint_name", "tilt_joint");
+        // Keep older camera deployments opt-in. Scout's tested DS-2DE2A404IW-DE3
+        // must select extended to avoid legacy absolute requests changing zoom.
+        joint_absolute_api_ = declare_parameter<std::string>("joint_absolute_api", "legacy");
+        if (joint_absolute_api_ != "legacy" && joint_absolute_api_ != "extended")
+        {
+            throw std::invalid_argument("joint_absolute_api must be legacy or extended");
+        }
         // How the joints relate to ISAPI azimuth/elevation on this mount; calibrate on
         // the robot (see ptz_geometry.hpp)
         mapping_.pan_sign = declare_parameter<double>("pan_sign", 1.0);
@@ -110,6 +118,10 @@ public:
         absolute_sub_ = create_subscription<geometry_msgs::msg::Vector3>(
             "~/absolute", 10,
             [this](const geometry_msgs::msg::Vector3::SharedPtr msg) { on_absolute(*msg); });
+        // Atomic inspection return: joint radians in x/y and direct zoom in z.
+        joint_absolute_sub_ = create_subscription<geometry_msgs::msg::Vector3>(
+            "~/joint_absolute", 10,
+            [this](const geometry_msgs::msg::Vector3::SharedPtr msg) { on_joint_absolute(*msg); });
 
         if (command_timeout_ > 0.0)
         {
@@ -133,6 +145,8 @@ public:
         {
             joint_state_pub_ =
                 create_publisher<sensor_msgs::msg::JointState>(joint_states_topic_, 10);
+            joint_position_pub_ = create_publisher<geometry_msgs::msg::Vector3Stamped>(
+                "~/joint_position", 10);
             status_timer_ = create_wall_timer(
                 std::chrono::duration<double>(1.0 / status_rate_), [this] { poll_status(); });
         }
@@ -198,6 +212,18 @@ private:
 
     void on_absolute(const geometry_msgs::msg::Vector3 &msg)
     {
+        if (!std::isfinite(msg.x) || !std::isfinite(msg.y) ||
+            !std::isfinite(msg.z) || msg.z <= 0.0)
+        {
+            RCLCPP_ERROR(get_logger(), "Ignoring invalid absolute PTZ target");
+            return;
+        }
+        if (joint_absolute_api_ == "extended")
+        {
+            const hk_camera::IsapiPosition position{hk_camera::wrap_360(msg.x), msg.y, msg.z};
+            put(base_url_ + "/absoluteEx", hk_camera::absolute_ex_body(position));
+            return;
+        }
         // ISAPI works in units of 0.1 degrees: azimuth 0~3600, elevation -900~900
         const int azimuth = static_cast<int>(std::lround(std::fmod(msg.x, 360.0) * 10.0));
         const int elevation =
@@ -222,8 +248,42 @@ private:
 
     void on_joint_cmd(std::optional<double> &target, const std_msgs::msg::Float64 &msg)
     {
+        if (!std::isfinite(msg.data))
+        {
+            RCLCPP_ERROR(get_logger(), "Ignoring nonfinite PTZ joint target");
+            return;
+        }
         target = msg.data;
         target_pending_ = true;
+    }
+
+    bool fresh_position() const
+    {
+        if (!measured_ || !measured_at_ || !std::isfinite(measured_->zoom) || measured_->zoom <= 0.0)
+        {
+            return false;
+        }
+        const double age = now().seconds() - *measured_at_;
+        return age >= 0.0 && age <= 1.0;
+    }
+
+    void on_joint_absolute(const geometry_msgs::msg::Vector3 &msg)
+    {
+        if (joint_absolute_api_ != "extended" || !fresh_position() ||
+            !std::isfinite(msg.x) || !std::isfinite(msg.y) ||
+            !std::isfinite(msg.z) || msg.z <= 0.0)
+        {
+            RCLCPP_ERROR(get_logger(),
+                         "Atomic PTZ return refused: extended API, fresh feedback and valid target required");
+            return;
+        }
+        // Replace both cached axes together; a previous split target must not
+        // overwrite this return on the next bridge-timer cycle.
+        pan_target_ = msg.x;
+        tilt_target_ = msg.y;
+        target_pending_ = false;
+        const auto position = hk_camera::joints_to_isapi({msg.x, msg.y}, mapping_, msg.z);
+        put(base_url_ + "/absoluteEx", hk_camera::absolute_ex_body(position));
     }
 
     // Send the latest joint setpoints as one absolute move. An axis the fleet has not
@@ -232,6 +292,13 @@ private:
     {
         if (!target_pending_)
         {
+            return;
+        }
+        if (joint_absolute_api_ == "extended" && !fresh_position())
+        {
+            // Never invent a zoom or replay this target after an eventual reconnect.
+            target_pending_ = false;
+            RCLCPP_ERROR(get_logger(), "PTZ move refused: fresh position/zoom feedback required");
             return;
         }
         hk_camera::JointPosition joints;
@@ -264,7 +331,11 @@ private:
         // Keep the zoom the camera is at; absoluteZoom is required in the request
         const double zoom = measured_ ? measured_->zoom : 1.0;
         const auto position = hk_camera::joints_to_isapi(joints, mapping_, zoom);
-        if (put(base_url_ + "/absolute", absolute_body(position)))
+        const bool extended = joint_absolute_api_ == "extended";
+        const std::string endpoint = extended ? "/absoluteEx" : "/absolute";
+        const std::string body = extended ? hk_camera::absolute_ex_body(position)
+                                          : absolute_body(position);
+        if (put(base_url_ + endpoint, body))
         {
             RCLCPP_INFO(get_logger(),
                         "Joint move: pan %.3f rad, tilt %.3f rad -> azimuth %.1f deg, "
@@ -306,6 +377,7 @@ private:
             return;
         }
         measured_ = *position;
+        measured_at_ = now().seconds();
         const auto joints = hk_camera::isapi_to_joints(*position, mapping_);
 
         sensor_msgs::msg::JointState msg;
@@ -313,6 +385,12 @@ private:
         msg.name = {pan_joint_name_, tilt_joint_name_};
         msg.position = {joints.pan_rad, joints.tilt_rad};
         joint_state_pub_->publish(msg);
+        geometry_msgs::msg::Vector3Stamped position_msg;
+        position_msg.header.stamp = msg.header.stamp;
+        position_msg.vector.x = joints.pan_rad;
+        position_msg.vector.y = joints.tilt_rad;
+        position_msg.vector.z = position->zoom;
+        joint_position_pub_->publish(position_msg);
     }
 
     static std::string absolute_body(const hk_camera::IsapiPosition &position)
@@ -441,6 +519,7 @@ private:
     std::string tilt_cmd_topic_;
     std::string pan_joint_name_;
     std::string tilt_joint_name_;
+    std::string joint_absolute_api_;
     std::string joint_states_topic_;
     double status_rate_;
     hk_camera::JointMapping mapping_;
@@ -450,6 +529,7 @@ private:
     std::optional<double> tilt_target_;
     bool target_pending_{false};
     std::optional<hk_camera::IsapiPosition> measured_;
+    std::optional<double> measured_at_;
     int last_pan_{0};
     int last_tilt_{0};
     int last_zoom_{0};
@@ -459,10 +539,12 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr preset_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr absolute_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr joint_absolute_sub_;
     rclcpp::TimerBase::SharedPtr watchdog_;
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr pan_cmd_sub_;
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr tilt_cmd_sub_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr joint_position_pub_;
     rclcpp::TimerBase::SharedPtr bridge_timer_;
     rclcpp::TimerBase::SharedPtr status_timer_;
 };
