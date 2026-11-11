@@ -31,6 +31,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/int32.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 using namespace std::chrono_literals;
 
@@ -93,6 +94,15 @@ public:
         mapping_.pan_offset_deg = declare_parameter<double>("pan_offset_deg", 0.0);
         mapping_.tilt_sign = declare_parameter<double>("tilt_sign", 1.0);
         mapping_.tilt_offset_deg = declare_parameter<double>("tilt_offset_deg", 0.0);
+        mapping_.limits.pan_min_deg = declare_parameter<double>("pan_min_deg", 0.0);
+        mapping_.limits.pan_max_deg = declare_parameter<double>("pan_max_deg", 360.0);
+        mapping_.limits.tilt_min_deg = declare_parameter<double>("tilt_min_deg", -90.0);
+        mapping_.limits.tilt_max_deg = declare_parameter<double>("tilt_max_deg", 90.0);
+        mapping_.limits.zoom_min = declare_parameter<double>("zoom_min", 0.1);
+        mapping_.limits.zoom_max = declare_parameter<double>("zoom_max", 100.0);
+        home_pan_rad_ = declare_parameter<double>("home_pan_rad", 0.0);
+        home_tilt_rad_ = declare_parameter<double>("home_tilt_rad", 0.0);
+        home_zoom_ = declare_parameter<double>("home_zoom", 1.0);
         // Position feedback: how often to ask the camera where it is. 0 disables it.
         status_rate_ = declare_parameter<double>("status_rate", 5.0);
         joint_states_topic_ =
@@ -140,6 +150,45 @@ public:
             // cycle sends a single absolute move instead of two
             bridge_timer_ = create_wall_timer(50ms, [this] { send_joint_target(); });
         }
+        else if (joint_absolute_api_ == "extended")
+        {
+            bridge_timer_ = create_wall_timer(50ms, [this] { send_joint_target(); });
+        }
+        return_home_service_ = create_service<std_srvs::srv::Trigger>(
+            "~/return_home", [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+                                     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+                if (joint_absolute_api_ != "extended" || !fresh_position())
+                {
+                    response->success = false;
+                    response->message = "extended API and fresh position/zoom feedback are required";
+                    return;
+                }
+                hk_camera::IsapiPosition target;
+                try
+                {
+                    target = hk_camera::joints_to_isapi(
+                        {home_pan_rad_, home_tilt_rad_}, mapping_, home_zoom_);
+                }
+                catch (const std::exception &error)
+                {
+                    response->success = false;
+                    response->message = error.what();
+                    return;
+                }
+                if (!hk_camera::pan_path_is_safe(measured_->azimuth_deg, target.azimuth_deg,
+                                                 mapping_.limits))
+                {
+                    response->success = false;
+                    response->message = "home pan path crosses the camera wrap gap";
+                    return;
+                }
+                pan_target_ = home_pan_rad_;
+                tilt_target_ = home_tilt_rad_;
+                target_zoom_ = home_zoom_;
+                target_pending_ = true;
+                response->success = true;
+                response->message = "home target accepted; monitor stamped joint_position for arrival";
+            });
 
         if (status_rate_ > 0.0)
         {
@@ -221,6 +270,14 @@ private:
         if (joint_absolute_api_ == "extended")
         {
             const hk_camera::IsapiPosition position{hk_camera::wrap_360(msg.x), msg.y, msg.z};
+            if (!fresh_position() || !hk_camera::valid_isapi_position(position, mapping_.limits) ||
+                !hk_camera::pan_path_is_safe(measured_->azimuth_deg, position.azimuth_deg,
+                                             mapping_.limits))
+            {
+                RCLCPP_ERROR(get_logger(),
+                             "Ignoring raw PTZ target: fresh feedback, capability limits and a safe pan path are required");
+                return;
+            }
             put(base_url_ + "/absoluteEx", hk_camera::absolute_ex_body(position));
             return;
         }
@@ -254,6 +311,7 @@ private:
             return;
         }
         target = msg.data;
+        target_zoom_.reset();
         target_pending_ = true;
     }
 
@@ -281,9 +339,8 @@ private:
         // overwrite this return on the next bridge-timer cycle.
         pan_target_ = msg.x;
         tilt_target_ = msg.y;
-        target_pending_ = false;
-        const auto position = hk_camera::joints_to_isapi({msg.x, msg.y}, mapping_, msg.z);
-        put(base_url_ + "/absoluteEx", hk_camera::absolute_ex_body(position));
+        target_zoom_ = msg.z;
+        target_pending_ = true;
     }
 
     // Send the latest joint setpoints as one absolute move. An axis the fleet has not
@@ -329,12 +386,28 @@ private:
         target_pending_ = false;
 
         // Keep the zoom the camera is at; absoluteZoom is required in the request
-        const double zoom = measured_ ? measured_->zoom : 1.0;
-        const auto position = hk_camera::joints_to_isapi(joints, mapping_, zoom);
+        const double zoom = target_zoom_.value_or(measured_ ? measured_->zoom : 1.0);
+        hk_camera::IsapiPosition position;
+        try
+        {
+            position = hk_camera::joints_to_isapi(joints, mapping_, zoom);
+        }
+        catch (const std::exception &error)
+        {
+            RCLCPP_ERROR(get_logger(), "PTZ move refused: %s", error.what());
+            return;
+        }
         const bool extended = joint_absolute_api_ == "extended";
+        if (extended && !hk_camera::pan_path_is_safe(measured_->azimuth_deg,
+                                                     position.azimuth_deg, mapping_.limits))
+        {
+            RCLCPP_ERROR(get_logger(), "PTZ move refused: pan path crosses camera wrap gap");
+            return;
+        }
         const std::string endpoint = extended ? "/absoluteEx" : "/absolute";
         const std::string body = extended ? hk_camera::absolute_ex_body(position)
                                           : absolute_body(position);
+        target_zoom_.reset();
         if (put(base_url_ + endpoint, body))
         {
             RCLCPP_INFO(get_logger(),
@@ -368,12 +441,20 @@ private:
             }
             return;
         }
-        const auto position = hk_camera::parse_ptz_status(response);
+        const auto position = hk_camera::parse_ptz_status(
+            response, joint_absolute_api_ == "extended");
         if (!position)
         {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                                  "Could not read AbsoluteHigh from the PTZ status: %s",
                                  response.c_str());
+            return;
+        }
+        if (joint_absolute_api_ == "extended" &&
+            !hk_camera::valid_isapi_position(*position, mapping_.limits))
+        {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                 "PTZ status is outside configured camera limits");
             return;
         }
         measured_ = *position;
@@ -522,11 +603,15 @@ private:
     std::string joint_absolute_api_;
     std::string joint_states_topic_;
     double status_rate_;
+    double home_pan_rad_;
+    double home_tilt_rad_;
+    double home_zoom_;
     hk_camera::JointMapping mapping_;
 
     CURL *curl_{nullptr};
     std::optional<double> pan_target_;
     std::optional<double> tilt_target_;
+    std::optional<double> target_zoom_;
     bool target_pending_{false};
     std::optional<hk_camera::IsapiPosition> measured_;
     std::optional<double> measured_at_;
@@ -547,6 +632,7 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr joint_position_pub_;
     rclcpp::TimerBase::SharedPtr bridge_timer_;
     rclcpp::TimerBase::SharedPtr status_timer_;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_home_service_;
 };
 
 int main(int argc, char **argv)

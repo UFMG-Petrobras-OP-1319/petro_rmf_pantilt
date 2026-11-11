@@ -20,10 +20,59 @@ TEST(PtzGeometry, NegativePanWrapsIntoTheIsapiRange)
     EXPECT_NEAR(position.azimuth_deg, 270.0, 1e-9);
 }
 
-TEST(PtzGeometry, ElevationIsClampedToTheIsapiRange)
+TEST(PtzGeometry, UnreachableElevationIsRejectedInsteadOfClamped)
 {
-    const auto position = hk_camera::joints_to_isapi({0.0, 2.0}, JointMapping{}, 1.0);
-    EXPECT_NEAR(position.elevation_deg, 90.0, 1e-9);
+    EXPECT_THROW(hk_camera::joints_to_isapi({0.0, 2.0}, JointMapping{}, 1.0),
+                 std::out_of_range);
+}
+
+TEST(PtzGeometry, ScoutLogicalZeroMapsToApprovedRawHome)
+{
+    JointMapping mapping;
+    mapping.pan_offset_deg = 160.0;
+    mapping.tilt_offset_deg = 15.0;
+    mapping.limits = {0.0, 355.0, 0.0, 90.0, 1.0, 64.0};
+    const auto raw = hk_camera::joints_to_isapi({0.0, 0.0}, mapping, 1.0);
+    EXPECT_NEAR(raw.azimuth_deg, 160.0, 1e-9);
+    EXPECT_NEAR(raw.elevation_deg, 15.0, 1e-9);
+    EXPECT_NEAR(raw.zoom, 1.0, 1e-9);
+    const auto logical = hk_camera::isapi_to_joints(raw, mapping);
+    EXPECT_NEAR(logical.pan_rad, 0.0, 1e-9);
+    EXPECT_NEAR(logical.tilt_rad, 0.0, 1e-9);
+}
+
+TEST(PtzGeometry, ScoutMappingAppliesSignsAndRejectsUnreachableTilt)
+{
+    JointMapping mapping;
+    mapping.pan_sign = -1.0;
+    mapping.pan_offset_deg = 160.0;
+    mapping.tilt_sign = -1.0;
+    mapping.tilt_offset_deg = 15.0;
+    mapping.limits = {0.0, 355.0, 0.0, 90.0, 1.0, 64.0};
+    const auto raw = hk_camera::joints_to_isapi(
+        {hk_camera::deg_to_rad(5.0), hk_camera::deg_to_rad(5.0)}, mapping, 16.0);
+    EXPECT_NEAR(raw.azimuth_deg, 155.0, 1e-9);
+    EXPECT_NEAR(raw.elevation_deg, 10.0, 1e-9);
+    EXPECT_THROW(hk_camera::joints_to_isapi({0.0, hk_camera::deg_to_rad(16.0)}, mapping, 1.0),
+                 std::out_of_range);
+}
+
+TEST(PtzGeometry, PanPathRejectsWrapAcrossMechanicalGap)
+{
+    const hk_camera::IsapiLimits limits{0.0, 355.0, 0.0, 90.0, 1.0, 64.0};
+    EXPECT_TRUE(hk_camera::pan_path_is_safe(160.0, 165.0, limits));
+    EXPECT_TRUE(hk_camera::pan_path_is_safe(350.0, 340.0, limits));
+    EXPECT_FALSE(hk_camera::pan_path_is_safe(350.0, 10.0, limits));
+    EXPECT_FALSE(hk_camera::pan_path_is_safe(10.0, 350.0, limits));
+}
+
+TEST(PtzGeometry, ScoutLimitsRejectPanElevationAndZoomOutsideCapability)
+{
+    const hk_camera::IsapiLimits limits{0.0, 355.0, 0.0, 90.0, 1.0, 64.0};
+    EXPECT_FALSE(hk_camera::valid_isapi_position({356.0, 15.0, 1.0}, limits));
+    EXPECT_FALSE(hk_camera::valid_isapi_position({160.0, -0.1, 1.0}, limits));
+    EXPECT_FALSE(hk_camera::valid_isapi_position({160.0, 15.0, 0.9}, limits));
+    EXPECT_TRUE(hk_camera::valid_isapi_position({160.0, 15.0, 64.0}, limits));
 }
 
 TEST(PtzGeometry, RoundTripWithSignsAndOffsets)
@@ -65,9 +114,13 @@ TEST(PtzGeometry, ParsesTheStatusReply)
     EXPECT_NEAR(position->zoom, 2.0, 1e-9);
 }
 
-TEST(PtzGeometry, RejectsAStatusWithoutAPosition)
+TEST(PtzGeometry, RejectsAStatusWithoutAPositionOrZoom)
 {
     EXPECT_FALSE(hk_camera::parse_ptz_status("<PTZStatus></PTZStatus>").has_value());
+    const std::string status_without_zoom =
+        "<AbsoluteHigh><elevation>0</elevation><azimuth>1600</azimuth></AbsoluteHigh>";
+    EXPECT_TRUE(hk_camera::parse_ptz_status(status_without_zoom).has_value());
+    EXPECT_FALSE(hk_camera::parse_ptz_status(status_without_zoom, true).has_value());
     EXPECT_FALSE(hk_camera::parse_ptz_status(
                      "<AbsoluteHigh><elevation>x</elevation><azimuth>10</azimuth></AbsoluteHigh>")
                      .has_value());

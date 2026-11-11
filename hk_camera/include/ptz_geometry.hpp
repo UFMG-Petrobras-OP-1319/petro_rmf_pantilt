@@ -8,7 +8,7 @@
 // node parameters and calibrated on the robot:
 //
 //   azimuth   = pan_sign  * deg(pan_joint)  + pan_offset_deg     (wrapped to 0~360)
-//   elevation = tilt_sign * deg(tilt_joint) + tilt_offset_deg    (clamped to -90~90)
+//   elevation = tilt_sign * deg(tilt_joint) + tilt_offset_deg    (validated, never clamped)
 //
 // Kept free of ROS and curl so it can be unit-tested on its own.
 
@@ -26,12 +26,23 @@
 namespace hk_camera
 {
 
+struct IsapiLimits
+{
+    double pan_min_deg{0.0};
+    double pan_max_deg{360.0};
+    double tilt_min_deg{-90.0};
+    double tilt_max_deg{90.0};
+    double zoom_min{0.1};
+    double zoom_max{100.0};
+};
+
 struct JointMapping
 {
     double pan_sign{1.0};
     double pan_offset_deg{0.0};
     double tilt_sign{1.0};
     double tilt_offset_deg{0.0};
+    IsapiLimits limits{};
 };
 
 struct IsapiPosition
@@ -85,15 +96,48 @@ inline double wrap_pi(double rad)
     return wrapped <= -M_PI ? wrapped + 2.0 * M_PI : wrapped;
 }
 
+inline bool valid_isapi_position(const IsapiPosition &position, const IsapiLimits &limits)
+{
+    return std::isfinite(position.azimuth_deg) && std::isfinite(position.elevation_deg) &&
+           std::isfinite(position.zoom) && position.azimuth_deg >= limits.pan_min_deg &&
+           position.azimuth_deg <= limits.pan_max_deg &&
+           position.elevation_deg >= limits.tilt_min_deg &&
+           position.elevation_deg <= limits.tilt_max_deg && position.zoom >= limits.zoom_min &&
+           position.zoom <= limits.zoom_max;
+}
+
+inline bool pan_path_is_safe(double current_deg, double target_deg, const IsapiLimits &limits)
+{
+    if (!std::isfinite(current_deg) || !std::isfinite(target_deg) ||
+        current_deg < limits.pan_min_deg || current_deg > limits.pan_max_deg ||
+        target_deg < limits.pan_min_deg || target_deg > limits.pan_max_deg)
+    {
+        return false;
+    }
+    // Absolute PTZ does not specify which direction the camera chooses. Reject a
+    // shortest-route wrap through the mechanical 355-to-0 degree gap.
+    return std::abs(target_deg - current_deg) < 180.0;
+}
+
 inline IsapiPosition joints_to_isapi(const JointPosition &joints, const JointMapping &mapping,
                                      double zoom)
 {
+    if (!std::isfinite(joints.pan_rad) || !std::isfinite(joints.tilt_rad) ||
+        !std::isfinite(zoom) || (mapping.pan_sign != 1.0 && mapping.pan_sign != -1.0) ||
+        (mapping.tilt_sign != 1.0 && mapping.tilt_sign != -1.0))
+    {
+        throw std::invalid_argument("Joint target, zoom and signs must be finite and valid");
+    }
     IsapiPosition position;
     position.azimuth_deg = wrap_360(mapping.pan_sign * rad_to_deg(joints.pan_rad) +
                                     mapping.pan_offset_deg);
-    position.elevation_deg = std::clamp(
-        mapping.tilt_sign * rad_to_deg(joints.tilt_rad) + mapping.tilt_offset_deg, -90.0, 90.0);
+    position.elevation_deg = mapping.tilt_sign * rad_to_deg(joints.tilt_rad) +
+                             mapping.tilt_offset_deg;
     position.zoom = zoom;
+    if (!valid_isapi_position(position, mapping.limits))
+    {
+        throw std::out_of_range("Mapped PTZ target is outside the configured camera limits");
+    }
     return position;
 }
 
@@ -145,7 +189,8 @@ inline std::optional<long> xml_integer(const std::string &xml, const std::string
 //   <PTZStatus><AbsoluteHigh><elevation>..</elevation><azimuth>..</azimuth>
 //   <absoluteZoom>..</absoluteZoom></AbsoluteHigh></PTZStatus>
 // Angles come in tenths of a degree and zoom in tenths of the multiplier.
-inline std::optional<IsapiPosition> parse_ptz_status(const std::string &xml)
+inline std::optional<IsapiPosition> parse_ptz_status(const std::string &xml,
+                                                         bool require_zoom = false)
 {
     const std::size_t block = xml.find("<AbsoluteHigh>");
     if (block == std::string::npos)
@@ -155,7 +200,7 @@ inline std::optional<IsapiPosition> parse_ptz_status(const std::string &xml)
     const auto elevation = xml_integer(xml, "elevation", block);
     const auto azimuth = xml_integer(xml, "azimuth", block);
     const auto zoom = xml_integer(xml, "absoluteZoom", block);
-    if (!elevation || !azimuth)
+    if (!elevation || !azimuth || (require_zoom && !zoom))
     {
         return std::nullopt;
     }

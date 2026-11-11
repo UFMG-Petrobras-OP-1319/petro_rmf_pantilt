@@ -23,6 +23,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
@@ -141,6 +142,7 @@ add_executable(hk_camera_ptz src/hk_camera_ptz.cpp)
 ament_target_dependencies(hk_camera_ptz
   rclcpp
   std_msgs
+  std_srvs
   geometry_msgs
   sensor_msgs # joint feedback
 )
