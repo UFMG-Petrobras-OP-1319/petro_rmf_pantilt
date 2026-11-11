@@ -103,6 +103,11 @@ public:
         home_pan_rad_ = declare_parameter<double>("home_pan_rad", 0.0);
         home_tilt_rad_ = declare_parameter<double>("home_tilt_rad", 0.0);
         home_zoom_ = declare_parameter<double>("home_zoom", 1.0);
+        if (declare_parameter<bool>("auto_home_on_start", false))
+        {
+            throw std::invalid_argument(
+                "auto_home_on_start must remain false; use the explicit return_home service");
+        }
         // Position feedback: how often to ask the camera where it is. 0 disables it.
         status_rate_ = declare_parameter<double>("status_rate", 5.0);
         joint_states_topic_ =
