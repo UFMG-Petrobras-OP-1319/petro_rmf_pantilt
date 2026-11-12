@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>image_snapshot</name>
+  <version>0.1.0</version>
+  <description>
+    Serves hk_camera_interfaces/TakePhoto for any image topic, so a camera without a
+    photo service of its own (RealSense, simulated cameras) answers like hk_camera_rtsp_pub.
+  </description>
+  <maintainer email="thalesasoares02@gmail.com">thalesasoares</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>hk_camera_interfaces</depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

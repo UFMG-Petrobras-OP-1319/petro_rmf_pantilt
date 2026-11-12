@@ -3,3 +3,6 @@ string save_path
 ---
 bool success
 string message
+# When the saved frame was captured (unset when success is false), so a caller can
+# tell a frame taken after it asked from one cached earlier
+builtin_interfaces/Time stamp
