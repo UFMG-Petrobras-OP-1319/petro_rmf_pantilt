@@ -139,11 +139,11 @@ public:
         setenv("OPENCV_FFMPEG_CAPTURE_OPTIONS",
                use_tcp_ ? "rtsp_transport;tcp" : "rtsp_transport;udp", 1);
 
-        publisher_ = image_transport::create_publisher(this, "/hk_camera/rgb");
+        publisher_ = image_transport::create_publisher(this, "hk_camera/rgb");
 
         // Writes the most recent published frame to disk on demand. The frame is already
         // decoded and flipped here, so a photo costs no extra connection to the camera and
-        // matches exactly what /hk_camera/rgb showed.
+        // matches exactly what hk_camera/rgb showed.
         photo_service_ = create_service<hk_camera_interfaces::srv::TakePhoto>(
             "~/take_photo",
             std::bind(&RtspCameraNode::handle_take_photo, this,
